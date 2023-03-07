@@ -1,109 +1,129 @@
 <?php
-// +----------------------------------------------------------------------
-// | 文件: index.php
-// +----------------------------------------------------------------------
-// | 功能: 提供todo api接口
-// +----------------------------------------------------------------------
-// | 时间: 2021-11-15 16:20
-// +----------------------------------------------------------------------
-// | 作者: rangangwei<gangweiran@tencent.com>
-// +----------------------------------------------------------------------
-
 namespace app\controller;
 
-use Error;
-use Exception;
-use app\model\Counters;
-use think\response\Html;
-use think\response\Json;
-use think\facade\Log;
-
-class Index
+use app\BaseController;
+use app\model\User;
+use EasyWeChat\OfficialAccount\Application;
+class Index extends BaseController
 {
-
-    /**
-     * 主页静态页面
-     * @return Html
-     */
-    public function index(): Html
+    public function index()
     {
-        # html路径: ../view/index.html
-        return response(file_get_contents(dirname(dirname(__FILE__)).'/view/index.html'));
-    }
-
-
-    /**
-     * 获取todo list
-     * @return Json
-     */
-    public function getCount(): Json
-    {
+        $app = new Application();
+        $server = $app->getServer();
         try {
-            $data = (new Counters)->find(1);
-            if ($data == null) {
-                $count = 0;
-            }else {
-                $count = $data["count"];
-            }
-            $res = [
-                "code" => 0,
-                "data" =>  $count
-            ];
-            Log::write('getCount rsp: '.json_encode($res));
-            return json($res);
-        } catch (Error $e) {
-            $res = [
-                "code" => -1,
-                "data" => [],
-                "errorMsg" => ("查询计数异常" . $e->getMessage())
-            ];
-            Log::write('getCount rsp: '.json_encode($res));
-            return json($res);
-        }
-    }
+            $server
+                ->addEventListener('subscribe', function ($message, \Closure $next) {
+                    //订阅消息
+                    //数据库添加信息
+                    $data =[
+                        'openid'  =>  $message['FromUserName'],
+                        'UpdateTime' => $message['CreateTime'],
+                        'ToUserName' => $message['ToUserName'],
+                        'subscribe' => '1'
+                    ];
+                    //判断是否注册过
+                    $user = User::where('openid',$message['FromUserName'])->findOrEmpty();
+                    if ($user ->isEmpty()){
+                        //未注册过
+                        $user->save($data);
+                    }else{
+                        //已注册过
+                        User::update($data);
+                    }
+                    return '终于等到您来啦~感谢您的订阅~';
+                })
+                ->addEventListener('unsubscribe', function ($message, \Closure $next) {
+                    //取消订阅
+                    //数据库更改状态
+                    $user =new User();
+                    $user::update([
+                        'openid'  =>  $message['FromUserName'],
+                        'UpdateTime' => $message['CreateTime'],
+                        'ToUserName' => $message['ToUserName'],
+                        'subscribe' => '0'
+                    ]);
+                    return '';
+                })
+                ->addEventListener('LOCATION', function ($message, \Closure $next) {
+                    //位置上报
+                    //数据库记录
+                    $data=[
+                        'openid'  =>  $message['FromUserName'],
+                        'UpdateTime' => $message['CreateTime'],
+                        'ToUserName' => $message['ToUserName'],
+                        'Location_X' =>$message['Latitude'],
+                        'Location_Y' =>$message['Longitude'],
+                        'Location_P' =>$message['Precision']
+                    ];
+                    //判断是否关注
+                    $user = User::where('openid',$message['FromUserName'])->findOrEmpty();
+                    if ($user ->isEmpty()){
+                        //未关注
+                        $user->save($data);
+                    }else{
+                        //已关注
+                        User::update($data);
+                    }
+                    return '';
+                })
 
+                ->addMessageListener('text', function ($message, \Closure $next) {
+                    //文本消息
+                    return $message["Content"];
+                })
+                ->addMessageListener('image', function ($message, \Closure $next) {
+                    //图片消息
+                    return [
+                        'MsgType' => 'image',
+                        'Image' => [
+                            'MediaId' => $message['MediaId'],
+                        ],
+                    ];
+                })
+                ->addMessageListener('voice', function ($message, \Closure $next) {
+                    //语音消息
+                    return [
+                        'MsgType' => 'voice',
+                        'Voice' => [
+                            'MediaId' => $message['MediaId'],
+                        ],
+                    ];
+                })
+                ->addMessageListener('video', function ($message, \Closure $next) {
+                    //视频消息
+                    return [
+                        'MsgType' => 'video',
+                        'Video' => [
+                            'MediaId' => $message['MediaId'],
+                        ],
+                    ];
+                })
+                ->addMessageListener('shortvideo', function ($message, \Closure $next) {
+                    //小视频消息
+                    return [
+                        'MsgType' => 'video',
+                        'Video' => [
+                            'MediaId' => $message['MediaId'],
+                        ],
+                    ];
+                })
+                ->addMessageListener('location', function ($message, \Closure $next) {
+                    //位置消息
+                    return '你发了一个位置';
+                })
+                ->addMessageListener('link', function ($message, \Closure $next) {
+                    //链接消息
+                    return '你发了一个链接';
+                })
+                ->addMessageListener('file', function ($message, \Closure $next) {
+                    //文件消息
+                    return '你发了一个文件';
+                });
 
-    /**
-     * 根据id查询todo数据
-     * @param $action `string` 类型，枚举值，等于 `"inc"` 时，表示计数加一；等于 `"reset"` 时，表示计数重置（清零）
-     * @return Json
-     */
-    public function updateCount($action): Json
-    {
-        try {
-            if ($action == "inc") {
-                $data = (new Counters)->find(1);
-                if ($data == null) {
-                    $count = 1;
-                }else {
-                    $count = $data["count"] + 1;
-                }
-    
-                $counters = new Counters;
-                $counters->create(
-                    ["count" => $count, 'id' => 1],
-                    ["count", 'id'],
-                    true
-                );
-            }else if ($action == "clear") {
-                Counters::destroy(1);
-                $count = 0;
-            }
+            return $server->serve();
 
-            $res = [
-                "code" => 0,
-                "data" =>  $count
-            ];
-            Log::write('updateCount rsp: '.json_encode($res));
-            return json($res);
-        } catch (Exception $e) {
-            $res = [
-                "code" => -1,
-                "data" => [],
-                "errorMsg" => ("更新计数异常" . $e->getMessage())
-            ];
-            Log::write('updateCount rsp: '.json_encode($res));
-            return json($res);
+        } catch (\Throwable $e) {
+
         }
     }
 }
